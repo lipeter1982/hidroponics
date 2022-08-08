@@ -1,0 +1,295 @@
+#include <Adafruit_GFX.h>    
+//#include <Adafruit_TFTLCD.h> 
+#include <MCUFRIEND_kbv.h>
+#include "TouchScreen.h"
+#include <EEPROM.h>
+#include "GravityTDS.h"
+
+ 
+#define BLACK 0x0000
+#define NAVY 0x000F
+#define DARKGREEN 0x03E0
+#define DARKCYAN 0x03EF
+#define MAROON 0x7800
+#define PURPLE 0x780F
+#define LIGHTGREY 0xC618
+#define DARKGREY 0x7BEF
+#define BLUE 0x001F
+#define GREEN 0x07E0
+#define CYAN 0x07FF
+#define RED 0xF800
+#define MAGENTA 0xF81F
+#define YELLOW 0xFFE0
+#define WHITE 0xFFFF
+#define ORANGE 0xFD20
+#define GREENYELLOW 0xAFE5
+#define PINK 0xF81F
+
+ 
+#define TdsSensorPin A5
+GravityTDS gravityTds;
+
+
+#define YP A1 
+#define XM A2  
+#define YM 7   
+#define XP 6  
+
+#define MINPRESSURE 10
+#define MAXPRESSURE 1000
+
+TouchScreen ts = TouchScreen(XP, YP, XM, YM, 250);
+TSPoint p;
+
+MCUFRIEND_kbv tft;
+uint16_t g_identifier;
+uint8_t rotation=3;
+uint32_t when = millis();
+uint8_t size = 4;
+uint8_t cor = 0;
+uint32_t tdsSensorPin =0;
+float array[12]={5.82,5.73,5.76,5.87,5.96,6,6.12,6,5.91,6,6.21,5.08}; //y *24para o ph
+uint32_t arrax[12]={70,95,115,145,175,205,235,255,285,305,335,370};
+
+
+
+uint32_t last_upd = 0;
+uint8_t curr_pos = 0;
+
+#define VREF 2.55   // analog reference voltage(Volt) of the ADC
+#define SCOUNT  30           // sum of sample point
+int analogBuffer[SCOUNT];    // store the analog value in the array, read from ADC
+int analogBufferTemp[SCOUNT];
+int analogBufferIndex = 0,copyIndex = 0;
+float averageVoltage = 0,tdsValue = 0,temperature = 30.6;
+uint32_t global=tdsValue;
+
+void actualizaHistorico()
+{
+  if((millis() / 1000) - last_upd > 3600)
+  {
+    array[curr_pos] = tdsValue,0;
+    if(curr_pos < 11)
+      curr_pos++;
+    else
+      curr_pos = 0;
+    last_upd = millis() / 1000;
+  }
+} 
+
+int getMedianNum(int bArray[], int iFilterLen) 
+{
+      int bTab[iFilterLen];
+      for (byte i = 0; i<iFilterLen; i++)
+      bTab[i] = bArray[i];
+      int i, j, bTemp;
+      for (j = 0; j < iFilterLen - 1; j++) 
+      {
+      for (i = 0; i < iFilterLen - j - 1; i++) 
+          {
+        if (bTab[i] > bTab[i + 1]) 
+            {
+        bTemp = bTab[i];
+            bTab[i] = bTab[i + 1];
+        bTab[i + 1] = bTemp;
+         }
+      }
+      }
+      if ((iFilterLen & 1) > 0)
+    bTemp = bTab[(iFilterLen - 1) / 2];
+      else
+    bTemp = (bTab[iFilterLen / 2] + bTab[iFilterLen / 2 - 1]) / 2;
+      return bTemp;
+      
+}
+
+
+
+void horario() 
+{
+     uint16_t a=10;
+      for(uint8_t count=1; count <= 12; count++)
+      {
+        tft.setTextColor(GREEN);
+        a=a+30;
+        if (a < 400)
+        {
+         tft.setCursor(a, 220);
+         tft.print(count);
+        }
+      }
+}
+
+void upstrm(uint16_t var) 
+{
+  uint16_t b=220;
+  
+    for(uint16_t count=1;count <= 10; count++)
+      {
+        //uint16_t out=count;
+        tft.setTextColor(ORANGE);
+        b=b-20;
+        if (b > 10) 
+          if (var >= 100)
+          {
+            //out=count*100;
+            tft.setCursor(10,b);
+            tft.print(count); //out);
+          }               
+        {
+        tft.setCursor(10,b);
+        tft.print(count);
+        }
+      }
+}
+
+
+void setup() {
+ 
+  tft.begin(9600);
+  tft.reset();
+  Serial.begin(9600);
+
+  g_identifier = tft.readID();  // get id (verificar porque da 0x0 e nao 0x7783)
+  tft.begin(0x7793);            // to enable ST7793 driver code (devia ser "tft.begin(g_identifier)" )
+  tft.setRotation(rotation);    // sets text direction
+  tft.fillScreen(BLACK);        // clear screen
+
+  gravityTds.setPin(TdsSensorPin);
+  gravityTds.setAref(3.3);
+  gravityTds.setAdcRange(1024);
+  gravityTds.begin();
+
+  
+
+}
+
+void loop() {
+  controloPrincipal();
+  actualizaHistorico(); 
+ 
+  tft.setTextSize(3);
+  tft.setCursor(40, 30);
+  tft.print("  PH");
+  tft.setTextSize(2);
+  tft.setCursor(10, 190);
+  tft.print("Versao 1.0");
+   //tft.fillRect(40,180,100,30,BLUE);
+  tft.setCursor(65, 188);
+  tft.setTextSize(2);
+  
+  tft.setTextSize(2);
+  tft.setTextColor(WHITE);
+  tft.setCursor(260, 189);
+
+  tft.setCursor(250, 30);
+  tft.setTextSize(3);
+  tft.print(" PPM");
+
+  tft.drawRect(30,65,125,70,YELLOW); 
+  tft.drawRect(25,60,135,80,NAVY); 
+  tft.setTextSize(4);
+  tft.setCursor(50, 80);
+  tft.setTextColor(WHITE, BLACK);
+  tft.print((millis() - when) / 1000);
+  //tft.print(when); // variaveis ph
+  
+  tft.drawRect(240,65,115,70,YELLOW); 
+  tft.drawRect(235,60,125,80,RED); 
+  tft.setTextSize(4);
+  tft.setCursor(251, 83);
+  tft.setTextColor(WHITE, BLACK);
+  //tft.print((millis() - when) / 1000);
+  tft.print(tdsValue,0); // variaveis ppm
+
+  p = ts.getPoint();
+  pinMode(XM, OUTPUT);
+  pinMode(YP, OUTPUT);
+  pinMode(XP, OUTPUT);
+  pinMode(YM, OUTPUT);
+  if (p.z > MINPRESSURE && p.z < MAXPRESSURE) {
+    if ((p.x > 245 && p.y > 180) && (p.x < 375 && p.y < 210));
+    {
+ 
+     tft.fillRect(2,2,400,240,BLACK);
+     tft.drawRect(1,1,398,238,MAGENTA); 
+     tft.setTextSize(1);
+      upstrm(100);
+      horario();
+  uint32_t xposinicial=35;
+  uint32_t yposinicial=(array[0]/4);
+    
+
+  for (uint32_t add=0; add < 12; add++) {
+
+    
+    float tempy=(array[add]/4);
+    uint32_t tempx=arrax[add];
+      
+
+      
+  tft.drawLine(xposinicial, 240-yposinicial, tempx, 240-tempy, GREEN);
+  tft.setCursor(tempx,240-tempy+5);
+  tft.fillCircle(tempx,240-tempy,2,BLUE);
+  tft.setTextSize(1);
+    tft.setTextColor(WHITE, BLACK);
+    tft.print(tempy*4,0);
+    xposinicial=tempx;
+    yposinicial=tempy;
+    delay(500);
+  }
+  tft.fillScreen(BLACK);  
+
+  
+    }
+    
+  
+  }   
+}  
+
+  
+int controloPrincipal()
+{
+   static unsigned long analogSampleTimepoint = millis();
+   
+   if(millis()-analogSampleTimepoint > 40U)     //every 40 milliseconds,read the analog value from the ADC
+   {
+     analogSampleTimepoint = millis();
+     analogBuffer[analogBufferIndex] = analogRead(TdsSensorPin);    //read the analog value and store into the buffer
+     analogBufferIndex++;
+     if(analogBufferIndex == SCOUNT) 
+         analogBufferIndex = 0;
+   }   
+   
+   static unsigned long printTimepoint = millis();
+
+
+   {
+      printTimepoint = millis();
+      for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
+        analogBufferTemp[copyIndex]= analogBuffer[copyIndex];
+      averageVoltage = getMedianNum(analogBufferTemp,SCOUNT) * (float)VREF / 1024.0; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+      float compensationCoefficient=1.0+0.02*(temperature-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+      float compensationVolatge=averageVoltage/compensationCoefficient;  //temperature compensation
+      tdsValue=(133.42*compensationVolatge*compensationVolatge*compensationVolatge - 255.86*compensationVolatge*compensationVolatge + 857.39*compensationVolatge)*0.5; //convert voltage value to tds value
+      //Serial.print("voltage:");
+      //Serial.print(averageVoltage,2);
+      //Serial.print("V   ");
+
+      Serial.print("TDS Value:");
+      Serial.print(tdsValue,0);
+      Serial.println("ppm");
+
+      
+    }
+     
+  }
+
+  
+   
+
+
+  
+
+
+
